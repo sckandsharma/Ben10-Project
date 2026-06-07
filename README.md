@@ -1,6 +1,6 @@
 # 👽 Ben 10: Omnitrix AR Experience
 
-![Omnitrix AR Banner](assets/omnitrix/New_OS_Omnitrix_artwork.webp)
+![Omnitrix AR Banner](banner.jpg)
 
 A fully interactive, web-based Augmented Reality (AR) experience that brings the iconic Ben 10 Omnitrix to life directly in your browser. No apps, no downloads—just step in front of your webcam, and the Omnitrix will physically lock onto your wrist. 
 
