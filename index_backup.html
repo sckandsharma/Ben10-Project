@@ -1,0 +1,2170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ben 10 Omnitrix AR Experience</title>
+<meta name="description" content="Interactive augmented reality Ben 10 Omnitrix experience using webcam hand tracking. Activate the Omnitrix, select aliens, and transform!">
+<style>
+/* ══════════════════════════════════════════
+   GLOBAL RESET & BASE
+   ══════════════════════════════════════════ */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  font-family: 'Courier New', monospace;
+  color: #00ff88;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ══════════════════════════════════════════
+   LAYER 1 — WEBCAM VIDEO
+   ══════════════════════════════════════════ */
+#webcam-video {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  object-fit: cover;
+  transform: scaleX(-1);
+  z-index: 1;
+}
+
+/* ══════════════════════════════════════════
+   LAYER 2 — THREE.JS CANVAS (3D Omnitrix)
+   ══════════════════════════════════════════ */
+#three-canvas {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ══════════════════════════════════════════
+   LAYER 3 — MAIN CANVAS (2D overlays)
+   ══════════════════════════════════════════ */
+#main-canvas {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* ══════════════════════════════════════════
+   LAYER 4 — TRANSFORMATION VIDEO
+   ══════════════════════════════════════════ */
+#transform-video {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  object-fit: cover;
+  display: none;
+  z-index: 1; /* behind main-canvas so green tint overlays it */
+}
+
+/* ══════════════════════════════════════════
+   LOADING SCREEN
+   ══════════════════════════════════════════ */
+#loading-screen {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  transition: opacity 0.6s ease-out;
+}
+
+/* Base Image */
+#loading-screen::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: url('deku_loading.jpg') no-repeat center center;
+  background-size: cover;
+  z-index: 0;
+}
+
+/* Flicker overlay to isolate and strobe the bright parts (eyes/lightning) */
+#loading-screen::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: url('deku_loading.jpg') no-repeat center center;
+  background-size: cover;
+  /* Crush the darks and boost the highlights to only show the glowing eyes/energy */
+  filter: brightness(1.5) contrast(3) saturate(2);
+  mix-blend-mode: color-dodge;
+  animation: eyeFlicker 0.1s infinite alternate;
+  z-index: 1;
+}
+
+@keyframes eyeFlicker {
+  0% { opacity: 0; }
+  100% { opacity: 0.85; }
+}
+
+#loading-screen h1, #loading-screen .loading-bar, #loading-screen .loading-status {
+  position: relative;
+  z-index: 2; /* Keep UI text above the background */
+}
+
+#loading-screen h1 {
+  font-size: 2.4rem;
+  color: #00ff44;
+  text-shadow: 0 0 20px #00ff44, 0 0 40px #00ff44;
+  letter-spacing: 6px;
+  margin-bottom: 30px;
+  animation: loadPulse 1.2s ease-in-out infinite;
+}
+#loading-screen .loading-bar {
+  width: 300px;
+  height: 4px;
+  background: rgba(0,255,68,0.15);
+  border: 1px solid #00ff44;
+  border-radius: 2px;
+  overflow: hidden;
+}
+#loading-screen .loading-fill {
+  width: 0%;
+  height: 100%;
+  background: #00ff44;
+  box-shadow: 0 0 10px #00ff44;
+  transition: width 0.3s ease;
+}
+#loading-screen .loading-status {
+  margin-top: 16px;
+  font-size: 0.85rem;
+  color: #88ffaa;
+  letter-spacing: 2px;
+}
+@keyframes loadPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+/* ══════════════════════════════════════════
+   AUDIO UNLOCK OVERLAY
+   ══════════════════════════════════════════ */
+#audio-unlock {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  background: rgba(0, 5, 0, 0.85);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 150;
+  cursor: pointer;
+}
+#audio-unlock .unlock-content {
+  text-align: center;
+}
+#audio-unlock .unlock-icon {
+  font-size: 4rem;
+  margin-bottom: 20px;
+  animation: loadPulse 1.5s ease-in-out infinite;
+}
+#audio-unlock .unlock-text {
+  font-size: 1.3rem;
+  color: #00ff44;
+  text-shadow: 0 0 12px #00ff44;
+  letter-spacing: 4px;
+}
+
+/* ══════════════════════════════════════════
+   HUD OVERLAY (HTML)
+   ══════════════════════════════════════════ */
+#hud-overlay {
+  position: fixed;
+  top: 16px; right: 16px;
+  z-index: 50;
+  pointer-events: none;
+}
+#hud-panel {
+  background: rgba(0, 10, 0, 0.7);
+  border: 1px solid #00ff44;
+  border-radius: 4px;
+  padding: 14px 18px;
+  min-width: 260px;
+  pointer-events: auto;
+}
+#hud-panel .hud-title {
+  font-size: 1rem;
+  font-weight: bold;
+  color: #00ff44;
+  text-shadow: 0 0 8px #00ff44;
+  letter-spacing: 3px;
+  margin-bottom: 10px;
+  text-align: center;
+}
+#hud-panel .hud-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  margin-bottom: 4px;
+}
+#hud-panel .hud-label {
+  color: #88ffaa;
+}
+#hud-panel .hud-value {
+  color: #00ff44;
+  text-shadow: 0 0 6px #00ff44;
+  font-weight: bold;
+}
+#instructions-panel {
+  background: rgba(0, 10, 0, 0.7);
+  border: 1px solid #00ff44;
+  border-radius: 4px;
+  padding: 12px 16px;
+  margin-top: 10px;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  pointer-events: auto;
+}
+#instructions-panel .instr-title {
+  color: #00ff44;
+  font-weight: bold;
+  letter-spacing: 2px;
+  margin-bottom: 6px;
+}
+#instructions-panel .instr-row {
+  color: #88ffaa;
+}
+#instructions-panel .instr-key {
+  color: #00ff44;
+  font-weight: bold;
+}
+.hud-hidden { display: none !important; }
+
+/* ══════════════════════════════════════════
+   ERROR SCREEN
+   ══════════════════════════════════════════ */
+#error-screen {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  background: #000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+  text-align: center;
+  padding: 40px;
+}
+#error-screen h2 {
+  color: #00ff44;
+  font-size: 1.6rem;
+  text-shadow: 0 0 14px #00ff44;
+  margin-bottom: 20px;
+}
+#error-screen p {
+  color: #88ffaa;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  max-width: 550px;
+}
+</style>
+</head>
+<body>
+
+<!-- IMPACT FRAME OVERLAYS (Preloaded for instant 0ms latency display) -->
+<img id="impact-frame-1" src="impact1.jpg" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; object-fit:cover; mix-blend-mode: hard-light; z-index:1000; pointer-events:none; opacity: 0.7;">
+<img id="impact-frame-2" src="impact2.jpg" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; object-fit:cover; mix-blend-mode: hard-light; z-index:1000; pointer-events:none; opacity: 0.7;">
+<img id="impact-frame-3" src="impact3.jpg" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; object-fit:cover; mix-blend-mode: hard-light; z-index:1000; pointer-events:none; opacity: 0.7;">
+
+<!-- IMPACT TRANSITION VIDEO -->
+<video id="impact-transition" src="impact_transition2.mp4" playsinline muted style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; object-fit:cover; mix-blend-mode: screen; z-index:1001; pointer-events:none; opacity: 0.95;"></video>
+
+<!-- Layer 1: Webcam -->
+<video id="webcam-video" autoplay playsinline muted></video>
+
+<!-- Layer 2: Three.js canvas (3D omnitrix) — inserted by Three.js -->
+
+<!-- Layer 3: Main Canvas (2D overlays) -->
+<canvas id="main-canvas"></canvas>
+
+<!-- Layer 4: Transformation Video -->
+<video id="transform-video" playsinline muted></video>
+
+<!-- Loading Screen -->
+<div id="loading-screen">
+  <h1>OMNITRIX AR</h1>
+  <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
+  <div class="loading-status" id="loading-status">INITIALIZING...</div>
+</div>
+
+<!-- Audio Unlock -->
+<div id="audio-unlock">
+  <div class="unlock-content">
+    <div class="unlock-icon">⏻</div>
+    <div class="unlock-text">TAP TO UNLOCK AUDIO</div>
+  </div>
+</div>
+
+<!-- HUD Overlay -->
+<div id="hud-overlay">
+  <div id="hud-panel">
+    <div class="hud-title">BEN 10 OMNITRIX AR</div>
+    <div class="hud-row">
+      <span class="hud-label">STATE:</span>
+      <span class="hud-value" id="hud-state">IDLE</span>
+    </div>
+    <div class="hud-row">
+      <span class="hud-label">ALIEN:</span>
+      <span class="hud-value" id="hud-alien">—</span>
+    </div>
+    <div class="hud-row">
+      <span class="hud-label">HANDS:</span>
+      <span class="hud-value" id="hud-hands">—</span>
+    </div>
+  </div>
+  <div id="instructions-panel">
+    <div class="instr-title">CONTROLS [H to hide]</div>
+    <div class="instr-row"><span class="instr-key">ACTIVATE:</span> Quick upward wrist flick (left hand)</div>
+    <div class="instr-row"><span class="instr-key">CYCLE:</span> Rotate index + thumb (right hand)</div>
+    <div class="instr-row"><span class="instr-key">SELECT:</span> Smash right hand onto left wrist</div>
+    <div class="instr-row"><span class="instr-key">TRANSFORM:</span> Smash left wrist downward</div>
+    <div class="instr-title" style="margin-top:8px">KEYBOARD DEBUG</div>
+    <div class="instr-row"><span class="instr-key">1-4:</span> Force state (Idle/Active/Select/Transform)</div>
+    <div class="instr-row"><span class="instr-key">←/→:</span> Cycle aliens (when active)</div>
+  </div>
+</div>
+
+<!-- Error Screen -->
+<div id="error-screen">
+  <div>
+    <h2>⚠ CAMERA ACCESS REQUIRED</h2>
+    <p id="error-message">Please allow camera access in your browser settings and reload this page. The Omnitrix AR experience needs your webcam to function.</p>
+  </div>
+</div>
+
+<!-- CDN Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<!-- Three.js (for 3D Omnitrix model ONLY) -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+// ════════════════════════════════════════════
+// THREE.JS imports (ESM via import map)
+// ════════════════════════════════════════════
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ════════════════════════════════════════════
+// ASSET CONFIGURATION — YOUR REAL FILES
+// ════════════════════════════════════════════
+// ── All assets now live in assets/ relative to index.html ──
+const ASSETS = {
+  omnitrix3D: 'assets/3d model omnitrix/ben10 original.glb',
+  omnitrix2D: {
+    idle:   'assets/omnitrix/New_OS_Omnitrix_artwork.webp',
+    active: 'assets/omnitrix/OS_Omnitrix_activated_artwork.webp'
+  },
+  aliens: [
+    {
+      name: 'Heatblast',
+      image: 'assets/aliens/Heatblast_os.webp',
+      video: 'assets/transformation/heatblast_1_prob4.mp4'
+    },
+    {
+      name: 'Wildmutt',
+      image: 'assets/aliens/Wildmutt_OS_Omnitrix_side.webp',
+      video: 'assets/transformation/Ben 10 _ ( OS ) Wildmutt Transformation_4_22_4_prob4.mp4'
+    },
+    {
+      name: 'Diamondhead',
+      image: 'assets/aliens/Diamondhead_os.webp',
+      video: 'assets/transformation/Ben 10 - Diamondhead Transformation 1080p_7_20_1_prob4.mp4'
+    },
+    {
+      name: 'Four Arms',
+      image: 'assets/aliens/Four_arms_os_render.webp',
+      video: 'assets/transformation/Ben 10 - Four Arms Transformation 1080p._4_14_5_prob4.mp4'
+    },
+    {
+      name: 'XLR8',
+      image: 'assets/aliens/XLR8.webp',
+      video: 'assets/transformation/Ben 10_ XLR8 Transformation Race Against Time Theme_ Full HD_16_27_1_prob4.mp4'
+    },
+    {
+      name: 'Upgrade',
+      image: 'assets/aliens/Upgrade_Model.webp',
+      video: 'assets/transformation/Ben 10 Classic_ All Upgrade Transformation Sequences_20_46_1_prob4_1_prob4.mp4'
+    },
+    {
+      name: 'Ghostfreak',
+      image: 'assets/aliens/GhostfreakPose2.webp',
+      video: 'assets/transformation/Ben 10 _ ( OS ) Ghostfreak Transformation_5_15_4_prob4.mp4'
+    },
+    {
+      name: 'Cannonbolt',
+      image: 'assets/aliens/Cannonbolt.webp',
+      video: 'assets/transformation/Ben 10 _ ( OS ) Cannonbolt Transformation_3_14_1_prob4.mp4'
+    },
+    {
+      name: 'Alien X',
+      image: 'assets/aliens/Alien_X_2.webp',
+      video: 'assets/transformation/Alien X Transformation (Forge of Creation)_10_27_8_prob4.mp4'
+    }
+  ],
+  sounds: {
+    activate:   'assets/soundeffetcs/Omnitrix activate.L.wav',
+    dial_click: 'assets/soundeffetcs/dial click.1.wav',
+    smash:      'assets/soundeffetcs/smash .1.wav',
+    timeout:    'assets/soundeffetcs/timeout.1.wav',
+    theme:      'assets/soundeffetcs/ben-10-classic-theme-song-official-instrumental-wgvc-3-u.wav'
+  }
+};
+
+const ALIEN_COUNT = ASSETS.aliens.length; // 9
+
+// ════════════════════════════════════════════
+// DOM REFERENCES
+// ════════════════════════════════════════════
+const webcamVideo     = document.getElementById('webcam-video');
+const mainCanvas      = document.getElementById('main-canvas');
+const ctx             = mainCanvas.getContext('2d');
+const transformVideo  = document.getElementById('transform-video');
+const loadingScreen   = document.getElementById('loading-screen');
+const loadingFill     = document.getElementById('loading-fill');
+const loadingStatus   = document.getElementById('loading-status');
+const audioUnlock     = document.getElementById('audio-unlock');
+const errorScreen     = document.getElementById('error-screen');
+const errorMessage    = document.getElementById('error-message');
+const hudState        = document.getElementById('hud-state');
+const hudAlien        = document.getElementById('hud-alien');
+const hudHands        = document.getElementById('hud-hands');
+const instructPanel   = document.getElementById('instructions-panel');
+
+// ════════════════════════════════════════════
+// STATE MACHINE
+// ════════════════════════════════════════════
+const STATE = {
+  IDLE: 'idle',
+  ACTIVATED: 'activated',
+  SELECTED: 'selected',
+  TRANSFORMING: 'transforming',
+  TIMING_OUT: 'timing_out'
+};
+
+let currentState = STATE.IDLE;
+let selectedAlienIndex = 0;
+let currentAlienIndex = 0;
+
+// ════════════════════════════════════════════
+// HAND STATE
+// ════════════════════════════════════════════
+const handState = {
+  left: {
+    detected: false,
+    wrist: { x: 0, y: 0 },
+    indexMCP: { x: 0, y: 0 },   // landmark 5
+    landmarks: []
+  },
+  right: {
+    detected: false,
+    wrist: { x: 0, y: 0 },
+    indexTip: { x: 0, y: 0 },   // landmark 8
+    thumbTip: { x: 0, y: 0 },   // landmark 4
+    middleTip: { x: 0, y: 0 },  // landmark 12
+    landmarks: []
+  }
+};
+
+// ════════════════════════════════════════════
+// LOADED ASSETS (runtime)
+// ════════════════════════════════════════════
+const loadedImages = {
+  omnitrix_idle: null,
+  omnitrix_active: null,
+  aliens: []
+};
+// ════════════════════════════════════════════
+// PHYSICS ENGINE — All 12 Rules
+// ════════════════════════════════════════════
+const physics = {
+  // Rule 1: Wrist position with lag (lerp 0.15)
+  wristX: 0, wristY: 0,
+  rightX: 0, rightY: 0,
+  rightIndexX: 0, rightIndexY: 0,
+  rightThumbX: 0, rightThumbY: 0,
+
+  // Rule 2: Rotational inertia
+  angularVelocity: 0, currentRotation: 0,
+  prevWristAngle: 0,
+
+  // Rule 3: Dial snap spring
+  dialDisplayAngle: 0, dialTargetAngle: 0, dialSpringVel: 0,
+
+  // Rule 4: Gravity sag
+  sagOffset: 0,
+
+  // Rule 5: Acceleration tilt
+  tiltX: 0, tiltY: 0,
+  prevWX: 0, prevWY: 0,
+  velX: 0, velY: 0,
+
+  // Rule 6: Dial lock on fast movement
+  handSpeed: 0, dialLocked: false, dialUnlockCounter: 0,
+
+  // Rule 7: Smash impact squash
+  smashScale: 1.0, smashScaleVel: 0,
+
+  // Rule 8: Idle breathing
+  breathPhase: 0,
+
+  // Rule 9: Hologram spring Y
+  holoOffsetY: 0, holoTargetY: -250, holoVelY: 0,
+
+  // Rule 10: Speed-based glow
+  glowIntensity: 0.4,
+
+  // Rule 11: Proximity field (right hand near left wrist)
+  proximity: 0,
+
+  // Time tracking
+  lastTime: Date.now()
+};
+
+// Backward compat aliases
+const smoothState = {
+  left: { get x() { return physics.wristX; }, get y() { return physics.wristY; } },
+  right: { get x() { return physics.rightX; }, get y() { return physics.rightY; } },
+  rightIndex: { get x() { return physics.rightIndexX; }, get y() { return physics.rightIndexY; } },
+  rightThumb: { get x() { return physics.rightThumbX; }, get y() { return physics.rightThumbY; } }
+};
+
+function updatePhysics() {
+  const now = Date.now();
+  const dt = Math.min((now - physics.lastTime) / 16.67, 3); // normalize to 60fps, cap at 3x
+  physics.lastTime = now;
+  const t = now * 0.001;
+
+  // ── Rule 12: Exponential smoothing (α=0.35 pos, α=0.20 rot) ──
+  const posAlpha = 0.15 * dt; // Rule 1: weighted lag
+  const rotAlpha = 0.20 * dt;
+
+  if (handState.left.detected) {
+    const rawX = handState.left.wrist.x;
+    const rawY = handState.left.wrist.y;
+
+    // Rule 5: Calculate velocity before smoothing
+    const dx = rawX - physics.prevWX;
+    const dy = rawY - physics.prevWY;
+    physics.velX = physics.velX * 0.7 + dx * 0.3;
+    physics.velY = physics.velY * 0.7 + dy * 0.3;
+    physics.prevWX = rawX;
+    physics.prevWY = rawY;
+
+    // Rule 1: Lerp with lag
+    physics.wristX += (rawX - physics.wristX) * posAlpha;
+    physics.wristY += (rawY - physics.wristY) * posAlpha;
+
+    // Rule 5: Acceleration tilt (resist motion)
+    physics.tiltX += (-physics.velX * 0.04 - physics.tiltX) * 0.15;
+    physics.tiltY += (-physics.velY * 0.02 - physics.tiltY) * 0.15;
+
+    // Rule 6: Hand speed for dial lock
+    physics.handSpeed = Math.hypot(physics.velX, physics.velY);
+    if (physics.handSpeed > 0.015) {
+      physics.dialLocked = true;
+      physics.dialUnlockCounter = 0;
+    } else if (physics.dialLocked) {
+      physics.dialUnlockCounter++;
+      if (physics.dialUnlockCounter > 12) physics.dialLocked = false;
+    }
+  }
+
+  if (handState.right.detected) {
+    physics.rightX += (handState.right.wrist.x - physics.rightX) * posAlpha;
+    physics.rightY += (handState.right.wrist.y - physics.rightY) * posAlpha;
+    physics.rightIndexX += (handState.right.indexTip.x - physics.rightIndexX) * posAlpha;
+    physics.rightIndexY += (handState.right.indexTip.y - physics.rightIndexY) * posAlpha;
+    physics.rightThumbX += (handState.right.thumbTip.x - physics.rightThumbX) * posAlpha;
+    physics.rightThumbY += (handState.right.thumbTip.y - physics.rightThumbY) * posAlpha;
+  }
+
+  // Rule 2: Rotational inertia (damping 0.85)
+  physics.angularVelocity *= 0.85;
+  physics.currentRotation += physics.angularVelocity * dt;
+
+  // Rule 3: Dial snap spring (stiffness 0.3, damping 0.75)
+  const dialDiff = physics.dialTargetAngle - physics.dialDisplayAngle;
+  physics.dialSpringVel += dialDiff * 0.3;
+  physics.dialSpringVel *= 0.75;
+  physics.dialDisplayAngle += physics.dialSpringVel * dt;
+
+  // Rule 4: Gravity sag
+  physics.sagOffset = 4 + Math.sin(t * 0.5) * 1.5;
+
+  // Rule 7: Smash scale spring back (elastic)
+  const smashDiff = 1.0 - physics.smashScale;
+  physics.smashScaleVel += smashDiff * 0.25;
+  physics.smashScaleVel *= 0.78;
+  physics.smashScale += physics.smashScaleVel * dt;
+
+  // Rule 8: Idle breathing
+  physics.breathPhase = t;
+
+  // Rule 9: Hologram spring (stiffness 0.2, damping 0.6)
+  const holoTarget = (currentState === STATE.ACTIVATED || currentState === STATE.SELECTED) ? -250 : 0;
+  physics.holoTargetY = holoTarget;
+  const holoDiff = physics.holoTargetY - physics.holoOffsetY;
+  physics.holoVelY += holoDiff * 0.2;
+  physics.holoVelY *= 0.6;
+  physics.holoOffsetY += physics.holoVelY * dt;
+
+  // Rule 10: Glow from hand speed (decays at 0.92)
+  const speedGlow = Math.min(physics.handSpeed * 8.0, 1.0);
+  physics.glowIntensity = Math.max(physics.glowIntensity * 0.92, 0.4 + speedGlow);
+
+  // Rule 11: Proximity field
+  if (handState.left.detected && handState.right.detected) {
+    const pdx = handState.right.wrist.x - handState.left.wrist.x;
+    const pdy = handState.right.wrist.y - handState.left.wrist.y;
+    const dist = Math.hypot(pdx, pdy);
+    physics.proximity = Math.max(0, 1 - dist / 0.3); // 0.3 = max range
+  } else {
+    physics.proximity *= 0.9;
+  }
+}
+
+// Alias for backward compat in render loop
+function updateSmoothState() { updatePhysics(); }
+
+const particles = [];
+function spawnParticles(x, y, count, color, speed) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const vel = speed * (0.5 + Math.random());
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * vel,
+      vy: Math.sin(angle) * vel,
+      life: 1.0,
+      decay: 0.015 + Math.random() * 0.02,
+      size: 2 + Math.random() * 4,
+      color
+    });
+  }
+}
+
+function updateAndDrawParticles() {
+  ctx.save();
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.15;
+    p.life -= p.decay;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+const screenShake = { x: 0, y: 0, intensity: 0 };
+function triggerScreenShake(intensity) {
+  screenShake.intensity = intensity;
+}
+function updateScreenShake() {
+  let scale = 1.0;
+  let rotX = 0;
+  let rotY = 0;
+  const imp1 = document.getElementById('impact-frame-1');
+  const imp2 = document.getElementById('impact-frame-2');
+  const imp3 = document.getElementById('impact-frame-3');
+  
+  // Helper to hide all frames
+  const hideAllFrames = () => {
+    if (imp1) imp1.style.display = 'none';
+    if (imp2) imp2.style.display = 'none';
+    if (imp3) imp3.style.display = 'none';
+  };
+  
+  // Layer 1 & 3: Quick zoom and impact blur on smash
+  if (currentState === STATE.TRANSFORMING) {
+     const elapsed = Date.now() - gestureState.transformStartTime;
+     if (elapsed < 350) {
+        const inv = 1 - (elapsed / 350); // 1.0 down to 0.0
+        scale = 1 + 2.5 * inv; // Massive 250% extra jump zoom
+        rotX = (Math.random() - 0.5) * 60 * inv; // Even heavier 3D tilt
+        rotY = (Math.random() - 0.5) * 60 * inv;
+        
+        // Twitch flash: strobe white exposure randomly in the first 150ms
+        const twitchMulti = (elapsed < 150 && Math.random() > 0.4) ? (4.0 * inv) : 0;
+        document.body.style.filter = `blur(${15 * inv}px) brightness(${1 + 1.0 * inv + twitchMulti}) contrast(${1 + 1.5 * inv})`;
+        
+        // 1-Framer anime impact images
+        hideAllFrames();
+        if (imp1 && imp2 && imp3) {
+          if (elapsed < 240) {
+            const phase = Math.floor(elapsed / 40); // Flash exactly every 40ms (approx 2.5 frames)
+            if (phase === 0) imp1.style.display = 'block';
+            else if (phase === 2) imp2.style.display = 'block';
+            else if (phase === 4) imp3.style.display = 'block';
+          }
+        }
+     } else {
+        document.body.style.filter = 'none';
+        hideAllFrames();
+     }
+  } else if (document.body.style.filter !== 'none') {
+     document.body.style.filter = 'none';
+     hideAllFrames();
+  }
+
+  // Layer 2: Twitch shake
+  if (screenShake.intensity > 0.1) {
+    screenShake.x = (Math.random() - 0.5) * screenShake.intensity;
+    screenShake.y = (Math.random() - 0.5) * screenShake.intensity;
+    screenShake.intensity *= 0.88; // Twitch decay
+    document.body.style.transform = `perspective(800px) scale(${scale}) rotateX(${rotX}deg) rotateY(${rotY}deg) translate(${screenShake.x}px, ${screenShake.y}px)`;
+  } else {
+    screenShake.x = 0;
+    screenShake.y = 0;
+    screenShake.intensity = 0;
+    if (scale !== 1.0 || rotX !== 0 || rotY !== 0) {
+       document.body.style.transform = `perspective(800px) scale(${scale}) rotateX(${rotX}deg) rotateY(${rotY}deg)`;
+    } else {
+       document.body.style.transform = 'none';
+    }
+  }
+}
+
+// ════════════════════════════════════════════
+// OFFSCREEN CANVAS FOR HOLOGRAM COMPOSITING
+// ════════════════════════════════════════════
+const holoCanvas = document.createElement('canvas');
+holoCanvas.width = 140;
+holoCanvas.height = 200;
+const holoCtx = holoCanvas.getContext('2d');
+
+// ════════════════════════════════════════════
+// THREE.JS — 3D OMNITRIX MODEL
+// ════════════════════════════════════════════
+let threeScene, threeCamera, threeRenderer, omnitrixModel;
+let omnitrix3DReady = false;
+
+function setupThreeJS() {
+  threeScene = new THREE.Scene();
+
+  // Transparent background so webcam shows through
+  threeRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+  threeRenderer.setSize(window.innerWidth, window.innerHeight);
+  threeRenderer.setPixelRatio(window.devicePixelRatio);
+  threeRenderer.setClearColor(0x000000, 0);
+  threeRenderer.domElement.id = 'three-canvas';
+  threeRenderer.domElement.style.position = 'fixed';
+  threeRenderer.domElement.style.top = '0';
+  threeRenderer.domElement.style.left = '0';
+  threeRenderer.domElement.style.width = '100vw';
+  threeRenderer.domElement.style.height = '100vh';
+  threeRenderer.domElement.style.pointerEvents = 'none';
+  threeRenderer.domElement.style.zIndex = '2';
+
+  // Insert before main-canvas
+  document.body.insertBefore(threeRenderer.domElement, mainCanvas);
+
+  // Camera — orthographic so we can position in screen space easily
+  const aspect = window.innerWidth / window.innerHeight;
+  threeCamera = new THREE.OrthographicCamera(
+    -window.innerWidth / 2, window.innerWidth / 2,
+    window.innerHeight / 2, -window.innerHeight / 2,
+    0.1, 2000
+  );
+  threeCamera.position.z = 500;
+
+  // Lighting
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
+  threeScene.add(ambientLight);
+
+  const dirLight = new THREE.DirectionalLight(0x00ff44, 2.0);
+  dirLight.position.set(200, 300, 500);
+  threeScene.add(dirLight);
+
+  // Strong green point light for Omnitrix glow
+  const greenLight = new THREE.PointLight(0x00ff44, 4, 800);
+  greenLight.position.set(0, 0, 200);
+  threeScene.add(greenLight);
+
+  // Second green fill light from below
+  const greenFill = new THREE.PointLight(0x00ff44, 2, 600);
+  greenFill.position.set(0, -100, 100);
+  threeScene.add(greenFill);
+
+  // Load the GLB model
+  const loader = new GLTFLoader();
+  loader.load(
+    ASSETS.omnitrix3D,
+    (gltf) => {
+      omnitrixModel = gltf.scene;
+      omnitrixModel.scale.set(350, 350, 350);
+      omnitrixModel.visible = false;
+
+      // Apply green emissive tint to all meshes
+      omnitrixModel.traverse((child) => {
+        if (child.isMesh) {
+          if (child.material) {
+            child.material = child.material.clone();
+            child.material.emissive = new THREE.Color(0x003311);
+            child.material.emissiveIntensity = 0.3;
+            child.material.transparent = false;
+            child.material.opacity = 1.0;
+          }
+        }
+      });
+
+      threeScene.add(omnitrixModel);
+      omnitrix3DReady = true;
+      console.log('✅ 3D Omnitrix model loaded');
+    },
+    undefined,
+    (error) => {
+      console.warn('3D model failed to load, using 2D fallback:', error);
+      omnitrix3DReady = false;
+    }
+  );
+}
+
+function updateThreeJS() {
+  if (!threeRenderer) return;
+
+  if (omnitrix3DReady && omnitrixModel && handState.left.detected) {
+    const wx = physics.wristX * window.innerWidth;
+    const wy = physics.wristY * window.innerHeight + physics.sagOffset;
+
+    // Convert screen coords to orthographic camera coords
+    const modelX = wx - window.innerWidth / 2;
+    const modelY = -(wy - window.innerHeight / 2);
+
+    omnitrixModel.position.set(modelX, modelY, 0);
+    // User requested to remove 3D model for now
+    omnitrixModel.visible = false;
+
+    // Rotation — face camera with slight tilt
+    const time = Date.now() * 0.001;
+    const isActive = currentState === STATE.ACTIVATED || currentState === STATE.SELECTED;
+
+    if (isActive) {
+      omnitrixModel.rotation.y = time * 0.3 + physics.tiltX;
+      omnitrixModel.rotation.x = Math.sin(time * 0.5) * 0.1 + physics.tiltY;
+      omnitrixModel.rotation.z = 0;
+
+      omnitrixModel.traverse((child) => {
+        if (child.isMesh && child.material) {
+          child.material.emissive.setHex(0x00ff44);
+          child.material.emissiveIntensity = physics.glowIntensity + physics.proximity * 0.5;
+        }
+      });
+    } else {
+      omnitrixModel.rotation.y = time * 0.15 + physics.tiltX;
+      omnitrixModel.rotation.x = Math.sin(time * 0.2) * 0.05 + physics.tiltY;
+      omnitrixModel.rotation.z = 0;
+
+      omnitrixModel.traverse((child) => {
+        if (child.isMesh && child.material) {
+          child.material.emissive.setHex(0x004422);
+          child.material.emissiveIntensity = 0.5 + Math.sin(time * 2) * 0.2;
+        }
+      });
+    }
+
+    // Bigger scale, pulse when active, squash on smash, breathing
+    const baseScale = 350 * physics.smashScale;
+    const breath = Math.sin(physics.breathPhase * 1.2) * 2;
+    const scaleAdd = isActive ? Math.sin(time * 2) * 10 : 0;
+    const finalScale = baseScale + scaleAdd + breath;
+    omnitrixModel.scale.set(finalScale, finalScale, finalScale);
+
+  } else if (omnitrixModel) {
+    omnitrixModel.visible = false;
+  }
+
+  threeRenderer.render(threeScene, threeCamera);
+}
+
+function resizeThreeJS() {
+  if (!threeRenderer || !threeCamera) return;
+  threeRenderer.setSize(window.innerWidth, window.innerHeight);
+  threeCamera.left = -window.innerWidth / 2;
+  threeCamera.right = window.innerWidth / 2;
+  threeCamera.top = window.innerHeight / 2;
+  threeCamera.bottom = -window.innerHeight / 2;
+  threeCamera.updateProjectionMatrix();
+}
+
+// ════════════════════════════════════════════
+// PLACEHOLDER GRAPHICS (fallback if assets fail)
+// ════════════════════════════════════════════
+function createOmnitrixPlaceholder(isActive) {
+  const c = document.createElement('canvas');
+  c.width = 100; c.height = 100;
+  const g = c.getContext('2d');
+
+  g.beginPath();
+  g.arc(50, 50, 44, 0, Math.PI * 2);
+  g.fillStyle = isActive ? '#004d15' : '#002a0a';
+  g.fill();
+  g.strokeStyle = isActive ? '#00ff44' : '#00aa33';
+  g.lineWidth = 3;
+  g.stroke();
+
+  g.beginPath();
+  g.arc(50, 50, 30, 0, Math.PI * 2);
+  g.fillStyle = isActive ? '#00ff44' : '#00cc33';
+  g.fill();
+
+  g.fillStyle = '#000';
+  g.beginPath();
+  g.moveTo(38, 32); g.lineTo(62, 32); g.lineTo(54, 48);
+  g.lineTo(62, 68); g.lineTo(38, 68); g.lineTo(46, 48);
+  g.closePath();
+  g.fill();
+
+  g.strokeStyle = '#fff';
+  g.lineWidth = 1.5;
+  g.beginPath();
+  g.moveTo(38, 32); g.lineTo(62, 32); g.lineTo(54, 48);
+  g.lineTo(62, 68); g.lineTo(38, 68); g.lineTo(46, 48);
+  g.closePath();
+  g.stroke();
+
+  return c;
+}
+
+function createAlienPlaceholder(index) {
+  const c = document.createElement('canvas');
+  c.width = 120; c.height = 180;
+  const g = c.getContext('2d');
+
+  const seed = index * 37;
+  const headSize = 16 + (seed % 12);
+  const bodyW = 24 + (seed % 16);
+  const armLen = 30 + (seed % 20);
+  const legSpread = 10 + (seed % 10);
+  const headY = 36 - (seed % 8);
+  const hasHorns = index % 3 === 0;
+  const hasTail = index % 4 === 1;
+  const armAngle = (seed % 40) - 20;
+  const cx = 60, bodyTop = headY + headSize - 4;
+
+  g.shadowBlur = 12; g.shadowColor = '#00ff44';
+  g.strokeStyle = '#00ff66'; g.lineWidth = 2.5;
+  g.fillStyle = 'rgba(0, 255, 68, 0.12)';
+  g.lineCap = 'round'; g.lineJoin = 'round';
+
+  g.beginPath();
+  if (index % 2 === 0) { g.arc(cx, headY, headSize, 0, Math.PI * 2); }
+  else { g.ellipse(cx, headY, headSize * 0.7, headSize * 1.2, 0, 0, Math.PI * 2); }
+  g.fill(); g.stroke();
+
+  if (hasHorns) {
+    g.beginPath();
+    g.moveTo(cx - headSize * 0.5, headY - headSize * 0.6);
+    g.lineTo(cx - headSize * 0.3, headY - headSize * 1.3);
+    g.moveTo(cx + headSize * 0.5, headY - headSize * 0.6);
+    g.lineTo(cx + headSize * 0.3, headY - headSize * 1.3);
+    g.stroke();
+  }
+
+  g.fillStyle = '#00ff44';
+  const eyeSpacing = headSize * 0.35;
+  const eyeSize = 2 + (index % 3);
+  g.beginPath(); g.arc(cx - eyeSpacing, headY - 2, eyeSize, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(cx + eyeSpacing, headY - 2, eyeSize, 0, Math.PI * 2); g.fill();
+
+  g.fillStyle = 'rgba(0, 255, 68, 0.12)';
+  g.beginPath();
+  g.moveTo(cx - bodyW / 2, bodyTop); g.lineTo(cx + bodyW / 2, bodyTop);
+  g.lineTo(cx + bodyW / 2 + 4, bodyTop + 55); g.lineTo(cx - bodyW / 2 - 4, bodyTop + 55);
+  g.closePath(); g.fill(); g.stroke();
+
+  g.beginPath();
+  const armY = bodyTop + 8;
+  g.moveTo(cx - bodyW / 2, armY); g.lineTo(cx - bodyW / 2 - armLen, armY + armAngle + 15);
+  g.moveTo(cx + bodyW / 2, armY); g.lineTo(cx + bodyW / 2 + armLen, armY - armAngle + 15);
+  g.stroke();
+
+  if (index === 3) { // Four Arms extra arms
+    g.beginPath();
+    g.moveTo(cx - bodyW / 2, armY + 18); g.lineTo(cx - bodyW / 2 - armLen * 0.8, armY + 40);
+    g.moveTo(cx + bodyW / 2, armY + 18); g.lineTo(cx + bodyW / 2 + armLen * 0.8, armY + 40);
+    g.stroke();
+  }
+
+  const legY = bodyTop + 55;
+  g.beginPath();
+  g.moveTo(cx - legSpread, legY); g.lineTo(cx - legSpread - 6, legY + 45);
+  g.moveTo(cx + legSpread, legY); g.lineTo(cx + legSpread + 6, legY + 45);
+  g.stroke();
+
+  if (hasTail) {
+    g.beginPath();
+    g.moveTo(cx + bodyW / 2 + 2, bodyTop + 45);
+    g.quadraticCurveTo(cx + bodyW / 2 + 30, bodyTop + 35, cx + bodyW / 2 + 20, bodyTop + 15);
+    g.stroke();
+  }
+
+  return c;
+}
+
+// ════════════════════════════════════════════
+// IMAGE LOADER
+// ════════════════════════════════════════════
+function loadImageSafe(src) {
+  if (!src) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => {
+      console.warn(`Asset not found: ${src} — using placeholder`);
+      resolve(null);
+    };
+    img.src = src;
+  });
+}
+
+let omnitrixIdlePlaceholder = null;
+let omnitrixActivePlaceholder = null;
+const alienPlaceholders = [];
+
+function buildPlaceholders() {
+  omnitrixIdlePlaceholder = createOmnitrixPlaceholder(false);
+  omnitrixActivePlaceholder = createOmnitrixPlaceholder(true);
+  for (let i = 0; i < ALIEN_COUNT; i++) {
+    alienPlaceholders.push(createAlienPlaceholder(i));
+  }
+}
+
+async function preloadAllImages() {
+  loadingStatus.textContent = 'LOADING IMAGES...';
+  loadingFill.style.width = '10%';
+
+  loadedImages.omnitrix_idle = await loadImageSafe(ASSETS.omnitrix2D.idle);
+  loadedImages.omnitrix_active = await loadImageSafe(ASSETS.omnitrix2D.active);
+  loadingFill.style.width = '20%';
+
+  for (let i = 0; i < ALIEN_COUNT; i++) {
+    const img = await loadImageSafe(ASSETS.aliens[i].image);
+    loadedImages.aliens.push(img);
+    loadingFill.style.width = (20 + (i / ALIEN_COUNT) * 25) + '%';
+  }
+}
+
+function getOmnitrixImage(isActive) {
+  const img = isActive ? loadedImages.omnitrix_active : loadedImages.omnitrix_idle;
+  if (img) return img;
+  return isActive ? omnitrixActivePlaceholder : omnitrixIdlePlaceholder;
+}
+
+function getAlienImage(index) {
+  if (loadedImages.aliens[index]) return loadedImages.aliens[index];
+  return alienPlaceholders[index];
+}
+
+// ════════════════════════════════════════════
+// AUDIO MANAGER — Uses HTML5 Audio (no main-thread blocking)
+// ════════════════════════════════════════════
+class AudioManager {
+  constructor() {
+    this.sounds = {};
+    this.themeAudio = null;
+    this.initialized = false;
+  }
+
+  init() {
+    this.initialized = true;
+  }
+
+  // Load all audio as HTML5 Audio elements
+  loadAfterUnlock() {
+    if (!this.initialized) return;
+    // Load effect sounds
+    const effectKeys = Object.keys(ASSETS.sounds).filter(k => k !== 'theme');
+    for (const key of effectKeys) {
+      try {
+        const audio = new Audio();
+        audio.preload = 'auto';
+        audio.src = ASSETS.sounds[key];
+        audio.volume = 1.0;
+        this.sounds[key] = audio;
+        console.log(`✅ Audio registered: ${key}`);
+      } catch (e) {
+        console.warn(`Audio skipped: ${key}`);
+        this.sounds[key] = null;
+      }
+    }
+
+    // Load and start background theme music
+    try {
+      this.themeAudio = new Audio();
+      this.themeAudio.preload = 'auto';
+      this.themeAudio.src = ASSETS.sounds.theme;
+      this.themeAudio.volume = 0.12;
+      this.themeAudio.loop = true;
+      
+      // Skip the silent intro/buildup so it starts bumping immediately
+      this.themeAudio.currentTime = 1.8; 
+      
+      this.themeAudio.play().catch(() => {});
+      console.log('✅ Background theme music started (Skipped intro)');
+    } catch (e) {
+      console.warn('Theme music failed to load');
+    }
+  }
+
+  play(key, volume = 1.0) {
+    if (!this.initialized || !this.sounds[key]) return;
+    try {
+      const audio = this.sounds[key].cloneNode(); // clone so overlapping plays work
+      audio.volume = Math.min(1, Math.max(0, volume));
+      audio.play().catch(() => {});
+    } catch (e) { /* silent */ }
+  }
+
+  stopAllLoops() {
+    // Theme keeps playing
+  }
+}
+
+const audioManager = new AudioManager();
+
+// ════════════════════════════════════════════
+// GESTURE DETECTOR
+// ════════════════════════════════════════════
+const gestureState = {
+  // Wrist flick (activate) — left hand upward
+  wristYHistory: [],
+  lastActivateTime: 0,
+
+  // Dial rotation — right hand index tip + thumb tip
+  prevDialAngle: null,
+  dialAccumulator: 0,
+  lastDialClickTime: 0,
+
+  // Selection — right hand near left wrist
+  lastSelectSmashTime: 0,
+  smashWasClose: false,
+
+  // Smash down (transform) — left hand downward
+  wristYSmashHistory: [],
+  lastSmashTime: 0,
+
+  // Transform timing
+  transformStartTime: 0,
+  placeholderTransform: false,
+  greenTintPhase: false,
+  timeoutStartTime: 0
+};
+
+function updateGestureDetector() {
+  const now = Date.now();
+
+  // ── GESTURE 1: WRIST FLICK UP (activates Omnitrix) ──
+  if (handState.left.detected && currentState === STATE.IDLE) {
+    gestureState.wristYHistory.push(handState.left.wrist.y);
+    if (gestureState.wristYHistory.length > 8) gestureState.wristYHistory.shift();
+
+    if (gestureState.wristYHistory.length >= 6) {
+      const recent = gestureState.wristYHistory;
+      const oldest = recent[recent.length - 6];
+      const newest = recent[recent.length - 1];
+      const deltaY = oldest - newest; // positive = moved UP
+
+      if (deltaY > 0.08 && now - gestureState.lastActivateTime > 1500) {
+        gestureState.lastActivateTime = now;
+        fireActivate();
+      }
+    }
+  } // <-- THIS WAS MISSING
+
+  // ── GESTURE 2: DIAL ROTATION (Thumb to Index angle) ──
+  if (handState.right.detected && (currentState === STATE.ACTIVATED || currentState === STATE.SELECTED)) {
+    const ix = handState.right.indexTip.x;
+    const iy = handState.right.indexTip.y;
+    const tx = handState.right.thumbTip.x;
+    const ty = handState.right.thumbTip.y;
+
+    // Angle between the thumb tip and the index tip
+    const angle = Math.atan2(ty - iy, tx - ix) * (180 / Math.PI);
+
+    if (gestureState.prevDialAngle !== null) {
+      let delta = angle - gestureState.prevDialAngle;
+      if (delta > 180) delta -= 360;
+      if (delta < -180) delta += 360;
+
+      // Ratchet logic: only build up rotation if we are past the cooldown lag
+      if (now - gestureState.lastDialClickTime > 500) {
+        // High Dead-zone: ignore all small perspective shifts when moving arm up/down
+        if (Math.abs(delta) < 5) delta = 0;
+
+        gestureState.dialAccumulator += delta;
+
+        // 75° rotation needed per alien switch (prevents accidental triggers from arm movement)
+        const degreesPerSlot = 75;
+
+        if (Math.abs(gestureState.dialAccumulator) >= degreesPerSlot) {
+          const direction = gestureState.dialAccumulator > 0 ? 1 : -1;
+          gestureState.dialAccumulator = 0; // Reset fully after switch
+          gestureState.lastDialClickTime = now;
+          fireDialClick(direction);
+        }
+      } else {
+        // Consume delta during cooldown so it doesn't queue up
+        gestureState.dialAccumulator = 0;
+      }
+    }
+    gestureState.prevDialAngle = angle;
+  } else {
+    gestureState.prevDialAngle = null;
+    gestureState.dialAccumulator = 0;
+  }
+
+  // ── GESTURE 3: RIGHT HAND NEAR LEFT WRIST = SMASH (select + transform) ──
+  // Pure proximity detection — no velocity needed. Much more reliable.
+  if (handState.left.detected && handState.right.detected &&
+      currentState === STATE.ACTIVATED) {
+
+    // Distance between right wrist/palm and left wrist
+    const dx = handState.right.wrist.x - handState.left.wrist.x;
+    const dy = handState.right.wrist.y - handState.left.wrist.y;
+    const dist = Math.hypot(dx, dy);
+
+    // Reduced threshold back to 0.18 to prevent accidental auto-transformations
+    const isClose = dist < 0.18; 
+
+    // Trigger on transition from far → close (not while staying close)
+    if (isClose && !gestureState.smashWasClose && now - gestureState.lastSelectSmashTime > 1500) {
+      gestureState.lastSelectSmashTime = now;
+      console.log(`🟢 SMASH DETECTED! dist=${dist.toFixed(3)}`);
+      fireSelectSmash();
+    }
+
+    gestureState.smashWasClose = isClose;
+  }
+}
+
+// ════════════════════════════════════════════
+// STATE TRANSITION EVENTS
+// ════════════════════════════════════════════
+function fireActivate() {
+  currentState = STATE.ACTIVATED;
+  currentAlienIndex = selectedAlienIndex;
+  audioManager.play('activate', 0.8);
+  gestureState.wristYHistory = [];
+  // Particles burst from wrist
+  const px = smoothState.left.x * window.innerWidth;
+  const py = smoothState.left.y * window.innerHeight;
+  spawnParticles(px, py, 30, '#00ff44', 4);
+  triggerScreenShake(8);
+  gestureState.smashWasClose = true; // prevent auto-smash on same frame
+  gestureState.lastSelectSmashTime = Date.now();
+}
+
+function fireDialClick(direction) {
+  if (currentState === STATE.SELECTED) {
+    currentState = STATE.ACTIVATED;
+  }
+  currentAlienIndex = ((currentAlienIndex + direction) % ALIEN_COUNT + ALIEN_COUNT) % ALIEN_COUNT;
+  audioManager.play('dial_click', 0.5);
+}
+
+function fireSelectSmash() {
+  // Merge select + transform: pick the alien and immediately transform
+  selectedAlienIndex = currentAlienIndex;
+  physics.smashScale = 0.7; // Squash physics
+  fireSmash();
+  const px = smoothState.left.x * window.innerWidth;
+  const py = smoothState.left.y * window.innerHeight;
+  spawnParticles(px, py, 50, '#00ff88', 6);
+  spawnParticles(px, py, 20, '#ffffff', 3);
+  triggerScreenShake(80); // Increased shake
+}
+
+function fireSmash() {
+  currentState = STATE.TRANSFORMING;
+  gestureState.transformStartTime = Date.now();
+  gestureState.placeholderTransform = false;
+  gestureState.greenTintPhase = true; // Start with green tint
+  audioManager.play('smash', 1.0);
+
+  // Trigger Light Transition Video
+  const transitionVid = document.getElementById('impact-transition');
+  if (transitionVid) {
+    transitionVid.style.display = 'block';
+    transitionVid.currentTime = 0;
+    transitionVid.play().catch(e => console.warn(e));
+    // Fallback hide if ended doesn't fire fast enough
+    setTimeout(() => { transitionVid.style.display = 'none'; }, 2000);
+    transitionVid.onended = () => { transitionVid.style.display = 'none'; };
+  }
+
+  const videoSrc = ASSETS.aliens[selectedAlienIndex].video;
+
+  if (!videoSrc) {
+    gestureState.placeholderTransform = true;
+    setTimeout(() => { if (currentState === STATE.TRANSFORMING) startTimeout(); }, 3000);
+    return;
+  }
+
+  let videoStarted = false;
+
+  function startVideo() {
+    if (videoStarted || currentState !== STATE.TRANSFORMING) return;
+    videoStarted = true;
+    
+    // We do NOT set greenTintPhase = false here anymore.
+    // The green flash will naturally cover the first 600ms of the video loading
+    // to hide any browser decoding delay!
+    
+    transformVideo.style.display = 'block';
+    requestAnimationFrame(() => {
+      transformVideo.style.opacity = '1';
+      transformVideo.muted = true;
+      transformVideo.play().then(() => {
+        setTimeout(() => { transformVideo.muted = false; }, 100);
+      }).catch((e) => {
+        console.warn('Video play failed:', e);
+        gestureState.placeholderTransform = true;
+      });
+    });
+  }
+
+  transformVideo.muted = true;
+  transformVideo.currentTime = 0;
+  transformVideo.src = videoSrc;
+  
+  // Force video to start INSTANTLY, without waiting for loadeddata/canplay
+  startVideo();
+
+  transformVideo.onerror = (e) => {
+    console.warn('Video load error:', e);
+    gestureState.placeholderTransform = true;
+  };
+
+  transformVideo.oncanplay = startVideo;
+  transformVideo.onloadeddata = startVideo;
+
+  let timeoutTriggered = false;
+  transformVideo.ontimeupdate = () => {
+    if (!timeoutTriggered && transformVideo.duration > 0 && transformVideo.currentTime > 0) {
+      if (transformVideo.duration - transformVideo.currentTime <= 1.5) {
+        timeoutTriggered = true;
+        startTimeout();
+      }
+    }
+  };
+
+  transformVideo.onended = () => {
+    if (!timeoutTriggered) {
+      timeoutTriggered = true;
+      startTimeout();
+    }
+  };
+
+  transformVideo.load();
+
+  setTimeout(() => {
+    if (currentState === STATE.TRANSFORMING && !videoStarted) {
+      console.warn('Video load timeout — using placeholder');
+      gestureState.placeholderTransform = true;
+      gestureState.greenTintPhase = false;
+      setTimeout(() => { if (currentState === STATE.TRANSFORMING) startTimeout(); }, 3000);
+    }
+  }, 10000);
+}
+
+// ── TIMEOUT MECHANIC (Ben 10 style) ──
+function startTimeout() {
+  currentState = STATE.TIMING_OUT;
+  gestureState.timeoutStartTime = Date.now();
+  audioManager.play('timeout', 1.0);
+
+  // Let the video finish its last 1.5 seconds under the red overlay, then hide it.
+  setTimeout(() => {
+    transformVideo.style.display = 'none';
+    transformVideo.pause();
+    transformVideo.removeAttribute('src');
+    transformVideo.load();
+  }, 1500);
+
+  // After 3 seconds total of red tint, return to idle
+  setTimeout(() => {
+    currentState = STATE.IDLE;
+    gestureState.transformStartTime = 0;
+    gestureState.placeholderTransform = false;
+    gestureState.greenTintPhase = false;
+  }, 3000);
+}
+
+// ════════════════════════════════════════════
+// RENDERING — MAIN LOOP
+// ════════════════════════════════════════════
+function render() {
+  mainCanvas.width = window.innerWidth;
+  mainCanvas.height = window.innerHeight;
+  ctx.clearRect(0, 0, mainCanvas.width, mainCanvas.height);
+
+  updateSmoothState();
+  updateScreenShake();
+
+  // Apply screen shake
+  ctx.save();
+  ctx.translate(screenShake.x, screenShake.y);
+
+  const skipGestures = currentState === STATE.TRANSFORMING || currentState === STATE.TIMING_OUT;
+  try { if (!skipGestures) updateGestureDetector(); } catch(e) { console.error('Gesture error:', e); }
+  try { if (!skipGestures) updateThreeJS(); } catch(e) { console.error('Three.js error:', e); }
+
+  if (!skipGestures) {
+    try { drawHandSkeleton(); } catch(e) { console.error('Skeleton error:', e); }
+    try { drawOmnitrixGlowRing(); } catch(e) { console.error('GlowRing error:', e); }
+    try { drawAlienHologram(); } catch(e) { console.error('Hologram error:', e); }
+    try { drawAlienIndexDots(); } catch(e) { console.error('Dots error:', e); }
+    try { drawDialVisual(); } catch(e) { console.error('Dial error:', e); }
+  }
+
+  try { drawGreenTintBuild(); } catch(e) { console.error('GreenTint error:', e); }
+  try { drawGreenFlash(); } catch(e) { console.error('Flash error:', e); }
+  try { drawPlaceholderTransformation(); } catch(e) { console.error('PlaceholderTx error:', e); }
+  try { drawTimeoutOverlay(); } catch(e) { console.error('Timeout error:', e); }
+  try { updateAndDrawParticles(); } catch(e) { console.error('Particles error:', e); }
+  try { updateHUD(); } catch(e) { console.error('HUD error:', e); }
+
+  ctx.restore(); // end screen shake
+
+  requestAnimationFrame(render);
+}
+
+// ── DRAW HAND SKELETON (debug visual) ──
+function drawHandSkeleton() {
+  // Draw left hand landmarks
+  if (handState.left.detected && handState.left.landmarks.length > 0) {
+    ctx.save();
+    ctx.fillStyle = '#00ff44';
+    ctx.strokeStyle = 'rgba(0,255,68,0.5)';
+    ctx.lineWidth = 1;
+    const lm = handState.left.landmarks;
+    // Draw dots on key landmarks
+    for (let i = 0; i < lm.length; i++) {
+      const x = lm[i].x * mainCanvas.width;
+      const y = lm[i].y * mainCanvas.height;
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Connect wrist to fingers
+    const connections = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+    for (const [a, b] of connections) {
+      if (lm[a] && lm[b]) {
+        ctx.beginPath();
+        ctx.moveTo(lm[a].x * mainCanvas.width, lm[a].y * mainCanvas.height);
+        ctx.lineTo(lm[b].x * mainCanvas.width, lm[b].y * mainCanvas.height);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+  // Draw right hand landmarks
+  if (handState.right.detected && handState.right.landmarks.length > 0) {
+    ctx.save();
+    ctx.fillStyle = '#44aaff';
+    ctx.strokeStyle = 'rgba(68,170,255,0.5)';
+    ctx.lineWidth = 1;
+    const lm = handState.right.landmarks;
+    for (let i = 0; i < lm.length; i++) {
+      const x = lm[i].x * mainCanvas.width;
+      const y = lm[i].y * mainCanvas.height;
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const connections = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+    for (const [a, b] of connections) {
+      if (lm[a] && lm[b]) {
+        ctx.beginPath();
+        ctx.moveTo(lm[a].x * mainCanvas.width, lm[a].y * mainCanvas.height);
+        ctx.lineTo(lm[b].x * mainCanvas.width, lm[b].y * mainCanvas.height);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+}
+
+// ── DRAW 1: OMNITRIX GLOW RING (accent around 3D model) ──
+function drawOmnitrixGlowRing() {
+  if (!handState.left.detected) return;
+
+  const wx = smoothState.left.x * mainCanvas.width;
+  const wy = smoothState.left.y * mainCanvas.height;
+  const isActive = currentState === STATE.ACTIVATED || currentState === STATE.SELECTED;
+
+  ctx.save();
+
+  if (!omnitrix3DReady) {
+    // Fallback: draw 2D Omnitrix image if 3D not available
+    const size = 80;
+    const img = getOmnitrixImage(isActive);
+    if (isActive) {
+      ctx.shadowBlur = 35;
+    } else {
+      ctx.shadowBlur = 20 + Math.sin(Date.now() * 0.003) * 8;
+    }
+    ctx.shadowColor = '#00ff44';
+    if (img) ctx.drawImage(img, wx - size / 2, wy - size / 2, size, size);
+  }
+
+  // Glow ring around wrist (both 2D and 3D modes)
+  if (isActive) {
+    // Rule 11: Proximity sensing — glow brighter when right hand approaches
+    const proxGlow = physics.proximity;
+
+    ctx.strokeStyle = '#00ff44';
+    ctx.lineWidth = 2 + proxGlow * 3;
+    ctx.shadowBlur = 12 + proxGlow * 20;
+    ctx.shadowColor = '#00ff44';
+    const rotation = Date.now() * 0.002;
+
+    ctx.beginPath();
+    ctx.arc(wx, wy, 50, rotation, rotation + Math.PI * 1.2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(wx, wy, 50, rotation + Math.PI, rotation + Math.PI + Math.PI * 0.8);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(0,255,68,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(wx, wy, 58, -rotation * 0.7, -rotation * 0.7 + Math.PI * 0.9);
+    ctx.stroke();
+  } else if (handState.left.detected) {
+    // Subtle idle glow ring
+    ctx.strokeStyle = `rgba(0, 255, 68, ${0.2 + Math.sin(Date.now() * 0.003) * 0.1})`;
+    ctx.lineWidth = 1;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = '#00ff44';
+    ctx.beginPath();
+    ctx.arc(wx, wy, 48, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// ── DRAW 2: ALIEN HOLOGRAM (Alien Force style — 100% match) ──
+function drawAlienHologram() {
+  if (currentState !== STATE.ACTIVATED && currentState !== STATE.SELECTED) return;
+  if (!handState.left.detected) return;
+
+  const wx = physics.wristX * mainCanvas.width;
+  const wy = physics.wristY * mainCanvas.height + physics.sagOffset;
+  const holoW = 150; 
+  const holoH = 210; 
+
+  // Rule 9: Spring-animated Y offset
+  const springY = physics.holoOffsetY;
+  const hx = wx - holoW / 2;
+  const hy = wy + springY - 30; // Shifted up slightly to fit cone better
+
+  const alienImg = getAlienImage(currentAlienIndex);
+
+  ctx.save();
+
+  // 0. ── REALISM SHADOWS / AMBIENT GREEN LIGHT ──
+  // Cast a dark, moody green light over the entire camera feed, centered on the watch
+  const maxR = Math.max(mainCanvas.width, mainCanvas.height) * 0.8;
+  const roomGrad = ctx.createRadialGradient(wx, wy, 0, wx, wy, maxR);
+  roomGrad.addColorStop(0, 'rgba(0, 255, 68, 0.3)');  // Glowing green light cast on user
+  roomGrad.addColorStop(0.3, 'rgba(0, 80, 20, 0.15)'); 
+  roomGrad.addColorStop(1, 'rgba(0, 10, 0, 0.7)');    // Deep shadow in the rest of the room
+  
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.fillStyle = roomGrad;
+  ctx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+  
+  // Reset for hologram elements
+  ctx.globalCompositeOperation = 'source-over';
+
+  // Flicker effect
+  const flicker = Math.random();
+  const flickerAlpha = flicker < 0.05 ? 0.4 : (0.85 + Math.random() * 0.15);
+  ctx.globalAlpha = flickerAlpha;
+
+  // 1. Draw the Base Lens (Ellipse)
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = '#00ffaa';
+  ctx.fillStyle = 'rgba(68, 255, 170, 0.4)';
+  ctx.beginPath();
+  ctx.ellipse(wx, wy, 35, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 2. Triangular Smoky Base
+  const coneTop = hy + holoH * 0.9; // Up to feet
+  const coneGrad = ctx.createLinearGradient(wx, wy, wx, coneTop);
+  coneGrad.addColorStop(0, 'rgba(68, 255, 170, 0.4)');
+  coneGrad.addColorStop(1, 'rgba(68, 255, 170, 0)');
+  
+  ctx.fillStyle = coneGrad;
+  ctx.shadowBlur = 0; // No shadow for smoke itself
+  
+  const t = Date.now() * 0.001;
+  // Multiple wobbly layers for a subtle smoke effect
+  for (let layer = 0; layer < 2; layer++) {
+    const wobble = Math.sin(t * 3 + layer * 2) * 10;
+    ctx.beginPath();
+    ctx.moveTo(wx, wy); // Pointy at the wrist (triangular)
+    // Curve out to the alien's feet
+    ctx.quadraticCurveTo(wx - holoW * 0.15 + wobble, (wy + coneTop) / 2, wx - holoW * 0.25 + wobble * 0.5, coneTop);
+    ctx.lineTo(wx + holoW * 0.25 - wobble * 0.5, coneTop); // Wide at the top
+    ctx.quadraticCurveTo(wx + holoW * 0.15 + wobble, (wy + coneTop) / 2, wx, wy);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // 3. Draw the solid neon-green alien silhouette
+  if (alienImg) {
+    // Clear offscreen canvas
+    holoCanvas.width = holoW;
+    holoCanvas.height = holoH;
+    holoCtx.clearRect(0, 0, holoW, holoH);
+
+    // Draw original image to get the mask
+    holoCtx.drawImage(alienImg, 0, 0, holoW, holoH);
+
+    // Fill it entirely with pure neon green (no inner details, just flat vector shape)
+    holoCtx.globalCompositeOperation = 'source-in';
+    holoCtx.fillStyle = '#44ff00'; 
+    holoCtx.fillRect(0, 0, holoW, holoH);
+
+    holoCtx.globalCompositeOperation = 'source-over';
+
+    // Drastically reduced glow for a flatter appearance
+    ctx.shadowColor = '#00ff00';
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.drawImage(holoCanvas, hx, hy);
+  }
+
+  ctx.restore();
+}
+
+// ── DRAW 3: ALIEN INDEX DOTS ──
+function drawAlienIndexDots() {
+  if (currentState !== STATE.ACTIVATED && currentState !== STATE.SELECTED) return;
+
+  const dotSpacing = 28;
+  const totalWidth = (ALIEN_COUNT - 1) * dotSpacing;
+  const startX = (mainCanvas.width - totalWidth) / 2;
+  const dotY = mainCanvas.height - 36;
+
+  for (let i = 0; i < ALIEN_COUNT; i++) {
+    const x = startX + i * dotSpacing;
+    const isActive = i === currentAlienIndex;
+    const radius = isActive ? 12 : 8;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, dotY, radius, 0, Math.PI * 2);
+
+    if (isActive) {
+      ctx.fillStyle = '#00ff46';
+      ctx.shadowBlur = 12;
+      ctx.shadowColor = '#00ff44';
+      ctx.fill();
+    } else {
+      ctx.fillStyle = 'rgba(0, 255, 70, 0.3)';
+      ctx.fill();
+      ctx.strokeStyle = '#00ff44';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Current alien name near dots
+  ctx.save();
+  ctx.fillStyle = '#00ff88';
+  ctx.shadowBlur = 6;
+  ctx.shadowColor = '#00ff44';
+  ctx.font = 'bold 12px "Courier New", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(ASSETS.aliens[currentAlienIndex].name.toUpperCase(), mainCanvas.width / 2, dotY - 18);
+  ctx.restore();
+}
+
+// ── DRAW 4: RIGHT HAND DIAL VISUAL (index + thumb) ──
+function drawDialVisual() {
+  if (currentState !== STATE.ACTIVATED && currentState !== STATE.SELECTED) return;
+  if (!handState.right.detected) return;
+
+  const ix = smoothState.rightIndex.x * mainCanvas.width;
+  const iy = smoothState.rightIndex.y * mainCanvas.height;
+  const tx = smoothState.rightThumb.x * mainCanvas.width;
+  const ty = smoothState.rightThumb.y * mainCanvas.height;
+
+  ctx.save();
+
+  // Line between index tip and thumb tip
+  ctx.strokeStyle = 'rgba(0, 255, 100, 0.7)';
+  ctx.lineWidth = 2;
+  ctx.shadowBlur = 6;
+  ctx.shadowColor = '#00ff44';
+  ctx.beginPath();
+  ctx.moveTo(ix, iy);
+  ctx.lineTo(tx, ty);
+  ctx.stroke();
+
+  // Midpoint circle
+  const midX = (ix + tx) / 2;
+  const midY = (iy + ty) / 2;
+  ctx.beginPath();
+  ctx.arc(midX, midY, 10, 0, Math.PI * 2);
+  ctx.strokeStyle = '#00ff44';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(0, 255, 68, 0.2)';
+  ctx.fill();
+
+  // Dots on fingertips
+  ctx.fillStyle = '#00ff44';
+  ctx.beginPath(); ctx.arc(ix, iy, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(tx, ty, 4, 0, Math.PI * 2); ctx.fill();
+
+  ctx.restore();
+}
+
+// ── DRAW 5: GREEN FLASH OVERLAY ──
+function drawGreenFlash() {
+  if (currentState !== STATE.TRANSFORMING) return;
+
+  const elapsed = Date.now() - gestureState.transformStartTime;
+  if (elapsed < 400) {
+    const progress = Math.min(elapsed / 200, 1);
+    ctx.save();
+    ctx.fillStyle = `rgba(0, 255, 70, ${progress})`;
+    ctx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+
+    if (progress > 0.5) {
+      ctx.strokeStyle = `rgba(255, 255, 255, ${(progress - 0.5) * 0.6})`;
+      ctx.lineWidth = 2;
+      const cx = mainCanvas.width / 2;
+      const cy = mainCanvas.height / 2;
+      for (let i = 0; i < 12; i++) {
+        const angle = (i / 12) * Math.PI * 2 + Date.now() * 0.001;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(angle) * 50, cy + Math.sin(angle) * 50);
+        ctx.lineTo(cx + Math.cos(angle) * (200 + progress * 300), cy + Math.sin(angle) * (200 + progress * 300));
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+}
+
+// Placeholder transformation (no video file)
+function drawPlaceholderTransformation() {
+  if (currentState !== STATE.TRANSFORMING || !gestureState.placeholderTransform) return;
+
+  const elapsed = Date.now() - gestureState.transformStartTime;
+
+  ctx.save();
+
+  if (elapsed < 2500) {
+    const pulseAlpha = 0.6 + Math.sin(elapsed * 0.008) * 0.4;
+    ctx.fillStyle = `rgba(0, 255, 70, ${pulseAlpha})`;
+    ctx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+
+    const nameAlpha = Math.min((elapsed - 200) / 300, 1);
+    if (nameAlpha > 0) {
+      ctx.globalAlpha = nameAlpha;
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowBlur = 30;
+      ctx.shadowColor = '#00ff44';
+      ctx.font = 'bold 72px "Courier New", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ASSETS.aliens[selectedAlienIndex].name.toUpperCase(), mainCanvas.width / 2, mainCanvas.height / 2);
+
+      ctx.font = 'bold 20px "Courier New", monospace';
+      ctx.fillStyle = '#00ff88';
+      ctx.fillText('TRANSFORMATION COMPLETE', mainCanvas.width / 2, mainCanvas.height / 2 + 60);
+    }
+  } else if (elapsed < 3000) {
+    const fadeAlpha = 1 - ((elapsed - 2500) / 500);
+    ctx.globalAlpha = fadeAlpha;
+    ctx.fillStyle = 'rgba(0, 255, 70, 0.8)';
+    ctx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+  } else {
+    currentState = STATE.IDLE;
+    gestureState.placeholderTransform = false;
+    gestureState.transformStartTime = 0;
+  }
+
+  ctx.restore();
+}
+
+// ── HUD UPDATE ──
+function updateHUD() {
+  hudState.textContent = currentState.toUpperCase();
+  const showAlien = currentState === STATE.ACTIVATED || currentState === STATE.SELECTED || 
+                    currentState === STATE.TRANSFORMING || currentState === STATE.TIMING_OUT;
+  hudAlien.textContent = showAlien ? ASSETS.aliens[selectedAlienIndex || currentAlienIndex].name : '—';
+  hudHands.innerHTML = `<span style="color:${handState.left.detected ? '#00ff44' : '#ff4444'}">${handState.left.detected ? 'L✓' : 'L✗'}</span> `
+    + `<span style="color:${handState.right.detected ? '#00ff44' : '#ff4444'}">${handState.right.detected ? 'R✓' : 'R✗'}</span>`;
+}
+
+// ── DRAW: GREEN TINT BUILD (intense radial burst from wrist, no text) ──
+function drawGreenTintBuild() {
+  if (currentState !== STATE.TRANSFORMING || !gestureState.greenTintPhase) return;
+
+  const elapsed = Date.now() - gestureState.transformStartTime;
+  const W = mainCanvas.width;
+  const H = mainCanvas.height;
+  // Burst from wrist position
+  const cx = physics.wristX * W;
+  const cy = physics.wristY * H;
+
+  ctx.save();
+
+  if (elapsed < 100) {
+    // Phase 1: Intense radial green burst expanding from wrist (100ms)
+    const progress = elapsed / 100;
+    const radius = Math.max(W, H) * 1.5 * progress;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    grad.addColorStop(0, `rgba(0, 255, 68, ${0.95})`);
+    grad.addColorStop(0.3, `rgba(0, 255, 68, ${0.8 * progress})`);
+    grad.addColorStop(0.7, `rgba(0, 200, 50, ${0.5 * progress})`);
+    grad.addColorStop(1, 'rgba(0, 255, 68, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+  } else if (elapsed < 200) {
+    // Phase 2: Full screen deep green with energy rings (100ms)
+    const phase2 = (elapsed - 100) / 100;
+    ctx.fillStyle = `rgba(0, 255, 68, ${0.85 - phase2 * 0.3})`;
+    ctx.fillRect(0, 0, W, H);
+
+    // Expanding energy rings from wrist
+    for (let r = 0; r < 3; r++) {
+      const ringProgress = (phase2 + r * 0.15) % 1;
+      const ringRadius = ringProgress * Math.max(W, H);
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.4 * (1 - ringProgress)})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  } else {
+    // End the tint phase when animation completes (200ms)
+    gestureState.greenTintPhase = false;
+  }
+
+  ctx.restore();
+}
+
+// ── DRAW: TIMEOUT OVERLAY (red vignette — Ben 10 style, no text) ──
+function drawTimeoutOverlay() {
+  if (currentState !== STATE.TIMING_OUT) return;
+
+  const elapsed = Date.now() - gestureState.timeoutStartTime;
+  const W = mainCanvas.width;
+  const H = mainCanvas.height;
+
+  ctx.save();
+
+  if (elapsed < 2000) {
+    const buildUp = Math.min(elapsed / 800, 1);
+    const pulse = 0.5 + Math.sin(elapsed * 0.012) * 0.3;
+
+    // Deep red vignette from edges
+    const grad = ctx.createRadialGradient(W/2, H/2, W * 0.1, W/2, H/2, W * 0.8);
+    grad.addColorStop(0, `rgba(255, 0, 0, ${0.1 * pulse * buildUp})`);
+    grad.addColorStop(0.5, `rgba(255, 0, 0, ${0.4 * pulse * buildUp})`);
+    grad.addColorStop(1, `rgba(180, 0, 0, ${0.7 * pulse * buildUp})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+  } else {
+    const fadeOut = 1 - ((elapsed - 2000) / 1000);
+    if (fadeOut > 0) {
+      const grad = ctx.createRadialGradient(W/2, H/2, W * 0.1, W/2, H/2, W * 0.8);
+      grad.addColorStop(0, 'rgba(255, 0, 0, 0)');
+      grad.addColorStop(1, `rgba(180, 0, 0, ${0.5 * fadeOut})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  ctx.restore();
+}
+
+// ════════════════════════════════════════════
+// MEDIAPIPE HAND TRACKING
+// ════════════════════════════════════════════
+let mpHands = null;
+
+function setupMediaPipe() {
+  loadingStatus.textContent = 'LOADING HAND TRACKING...';
+  loadingFill.style.width = '65%';
+
+  return new Promise((resolve, reject) => {
+    try {
+      mpHands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+
+      mpHands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
+      });
+
+      mpHands.onResults(onHandResults);
+      loadingFill.style.width = '80%';
+      resolve();
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+function onHandResults(results) {
+  handState.left.detected = false;
+  handState.right.detected = false;
+
+  if (!results.multiHandLandmarks || !results.multiHandedness) return;
+
+  for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+    const landmarks = results.multiHandLandmarks[i];
+    const handedness = results.multiHandedness[i];
+    const label = handedness.label;
+
+    // MIRRORING: MediaPipe "Right" → user's LEFT hand on screen
+    //            MediaPipe "Left"  → user's RIGHT hand on screen
+
+    if (label === 'Right') {
+      // LEFT hand (Omnitrix wrist)
+      handState.left.detected = true;
+      handState.left.wrist.x = 1 - landmarks[0].x;
+      handState.left.wrist.y = landmarks[0].y;
+      handState.left.indexMCP.x = 1 - landmarks[5].x;
+      handState.left.indexMCP.y = landmarks[5].y;
+      handState.left.landmarks = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }));
+    } else if (label === 'Left') {
+      // RIGHT hand (dial + smash)
+      handState.right.detected = true;
+      handState.right.wrist.x = 1 - landmarks[0].x;
+      handState.right.wrist.y = landmarks[0].y;
+      handState.right.indexTip.x = 1 - landmarks[8].x;
+      handState.right.indexTip.y = landmarks[8].y;
+      handState.right.thumbTip.x = 1 - landmarks[4].x;
+      handState.right.thumbTip.y = landmarks[4].y;
+      handState.right.middleTip.x = 1 - landmarks[12].x;
+      handState.right.middleTip.y = landmarks[12].y;
+      handState.right.landmarks = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }));
+    }
+  }
+}
+
+// ════════════════════════════════════════════
+// CAMERA SETUP
+// ════════════════════════════════════════════
+async function setupCamera() {
+  loadingStatus.textContent = 'ACCESSING CAMERA...';
+  loadingFill.style.width = '55%';
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
+    });
+    webcamVideo.srcObject = stream;
+    await new Promise((resolve) => {
+      webcamVideo.onloadedmetadata = () => { webcamVideo.play(); resolve(); };
+    });
+  } catch (e) {
+    showError('CAMERA ACCESS DENIED', 'Please allow camera access in your browser settings and reload this page.');
+    throw e;
+  }
+}
+
+function startCameraProcessing() {
+  loadingStatus.textContent = 'STARTING HAND DETECTION...';
+  loadingFill.style.width = '88%';
+
+  try {
+    const camera = new Camera(webcamVideo, {
+      onFrame: async () => {
+        if (mpHands) {
+          try {
+            await mpHands.send({ image: webcamVideo });
+          } catch (e) {
+            // MediaPipe frame error, ignore
+          }
+        }
+      },
+      width: 1280,
+      height: 720
+    });
+    camera.start().then(() => {
+      console.log('✅ Camera processing started');
+    }).catch(e => {
+      console.error('Camera start failed:', e);
+    });
+  } catch (e) {
+    console.error('Camera processing setup failed:', e);
+  }
+}
+
+// ════════════════════════════════════════════
+// ERROR HANDLING
+// ════════════════════════════════════════════
+function showError(title, message) {
+  errorScreen.querySelector('h2').textContent = '⚠ ' + title;
+  errorMessage.textContent = message;
+  errorScreen.style.display = 'flex';
+  loadingScreen.style.display = 'none';
+}
+
+// ════════════════════════════════════════════
+// KEYBOARD CONTROLS
+// ════════════════════════════════════════════
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'h' || e.key === 'H') {
+    instructPanel.classList.toggle('hud-hidden');
+  }
+  // DEBUG: Press 1-4 to manually switch states
+  if (e.key === '1') { currentState = STATE.IDLE; console.log('State -> IDLE'); }
+  if (e.key === '2') { currentState = STATE.ACTIVATED; console.log('State -> ACTIVATED'); }
+  if (e.key === '3') { currentState = STATE.SELECTED; selectedAlienIndex = currentAlienIndex; console.log('State -> SELECTED'); }
+  if (e.key === '4') { fireSmash(); console.log('State -> TRANSFORMING'); }
+  // DEBUG: Press left/right arrow to cycle aliens
+  if (e.key === 'ArrowRight' && (currentState === STATE.ACTIVATED || currentState === STATE.SELECTED)) {
+    currentAlienIndex = (currentAlienIndex + 1) % ALIEN_COUNT;
+    console.log('Alien ->', ASSETS.aliens[currentAlienIndex].name);
+  }
+  if (e.key === 'ArrowLeft' && (currentState === STATE.ACTIVATED || currentState === STATE.SELECTED)) {
+    currentAlienIndex = (currentAlienIndex - 1 + ALIEN_COUNT) % ALIEN_COUNT;
+    console.log('Alien ->', ASSETS.aliens[currentAlienIndex].name);
+  }
+});
+
+// ════════════════════════════════════════════
+// WINDOW RESIZE
+// ════════════════════════════════════════════
+function handleResize() {
+  mainCanvas.width = window.innerWidth;
+  mainCanvas.height = window.innerHeight;
+  resizeThreeJS();
+}
+window.addEventListener('resize', handleResize);
+
+// ════════════════════════════════════════════
+// STARTUP SEQUENCE
+// ════════════════════════════════════════════
+// Helper: yield to main thread so Chrome doesn't show "Page Unresponsive"
+function breathe() { return new Promise(r => setTimeout(r, 0)); }
+
+async function init() {
+  try {
+    // 1. Build placeholder graphics
+    buildPlaceholders();
+
+    // 2. Init audio system (just creates context, no loading)
+    audioManager.init();
+
+    // 3. Preload images
+    await preloadAllImages();
+    await breathe();
+
+    // 4. Setup camera
+    await setupCamera();
+    await breathe();
+
+    // 5. Setup Three.js (3D Omnitrix)
+    loadingStatus.textContent = 'LOADING 3D OMNITRIX...';
+    loadingFill.style.width = '60%';
+    setupThreeJS();
+    await breathe();
+
+    // 6. Setup MediaPipe
+    await setupMediaPipe();
+    await breathe();
+
+    // 7. Start camera processing
+    startCameraProcessing();
+
+    // 8. Ready!
+    loadingFill.style.width = '100%';
+    loadingStatus.textContent = 'OMNITRIX ONLINE';
+
+    await new Promise(r => setTimeout(r, 400));
+
+    // Hide loading, show audio unlock
+    loadingScreen.style.opacity = '0';
+    setTimeout(() => { loadingScreen.style.display = 'none'; }, 600);
+
+    audioUnlock.style.display = 'flex';
+
+    // Audio loads ONLY after user clicks — uses HTML Audio (no thread blocking)
+    const unlockHandler = () => {
+      audioUnlock.style.display = 'none';
+      document.removeEventListener('click', unlockHandler);
+      document.removeEventListener('touchstart', unlockHandler);
+      // Defer audio loading 2 seconds so tracking stays smooth
+      setTimeout(() => { audioManager.loadAfterUnlock(); }, 2000);
+    };
+    document.addEventListener('click', unlockHandler);
+    document.addEventListener('touchstart', unlockHandler);
+
+    // 9. Start render loop
+    handleResize();
+    requestAnimationFrame(render);
+
+  } catch (e) {
+    console.error('Initialization error:', e);
+    if (!errorScreen.style.display || errorScreen.style.display === 'none') {
+      showError('INITIALIZATION FAILED', 'An error occurred while starting the Omnitrix AR. Check the console and ensure Chrome with a webcam is being used.');
+    }
+  }
+}
+
+// Go!
+init();
+</script>
+</body>
+</html>
